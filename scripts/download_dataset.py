@@ -45,7 +45,6 @@ def main() -> None:
         repo_id=args.repo_id,
         repo_type="dataset",
         local_dir=str(output_dir),
-        local_dir_use_symlinks=False,
     )
 
     print(f"Download complete: {path}")
