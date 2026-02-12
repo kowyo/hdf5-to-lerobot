@@ -33,6 +33,9 @@ clean:
 run:
 	uv run python -m hdf5_to_lerobot
 
+download-dataset:
+	uv run python scripts/download_dataset.py $(REPO)
+
 # Show help
 help:
 	@echo "Available targets:"
@@ -43,4 +46,5 @@ help:
 	@echo "  format       - Run ruff formatter"
 	@echo "  clean        - Clean build artifacts and cache files"
 	@echo "  run          - Run the hdf5_to_lerobot pipeline"
+	@echo "  download-dataset REPO=<repo_id> - Download dataset from Hugging Face"
 	@echo "  help         - Show this help message"
