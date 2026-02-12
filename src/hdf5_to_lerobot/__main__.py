@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HDF5 to LeRobot Pipeline: Clean + Convert
-LeRobot 数据集格式参考 Pi0.5 版本
+CLI entry point for the HDF5 to LeRobot Pipeline.
 
-This is a thin wrapper around the hdf5_to_lerobot library for backward compatibility.
-For new code, consider using: python -m hdf5_to_lerobot
+Usage:
+    python -m src --config config.json
+    python -m src --config config.json --skip-cleaning
+    python -m src --config config.json --skip-conversion
 """
 
 import os
-import sys
 import argparse
-
-# Add src to path for development mode
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
-
-from hdf5_to_lerobot.pipeline import run_pipeline
+from .pipeline import run_pipeline
 
 
 def main():
