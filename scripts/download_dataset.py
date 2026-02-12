@@ -8,7 +8,7 @@ Usage:
 """
 
 import argparse
-import os
+from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
@@ -33,16 +33,18 @@ def main() -> None:
     output_dir = args.output_dir
     if output_dir is None:
         dataset_name = args.repo_id.split("/")[-1]
-        output_dir = f"./data/{dataset_name}"
-    output_dir = os.path.abspath(output_dir)
-    os.makedirs(output_dir, exist_ok=True)
+        output_dir = Path("data") / dataset_name
+    else:
+        output_dir = Path(output_dir)
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Downloading {args.repo_id} to {output_dir}...")
 
     path = snapshot_download(
         repo_id=args.repo_id,
         repo_type="dataset",
-        local_dir=output_dir,
+        local_dir=str(output_dir),
         local_dir_use_symlinks=False,
     )
 

@@ -5,11 +5,10 @@ This module provides functions to convert cleaned HDF5 data to the LeRobot forma
 used by Pi0.5 and similar robot learning frameworks.
 """
 
-import glob
 import json
 import multiprocessing as mp
-import os
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import cv2
 import h5py
@@ -233,15 +232,16 @@ def save_episode_with_datasets(data: dict, out_path: str) -> None:
     )
 
     dataset = Dataset.from_dict(data, features=features)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     dataset.to_parquet(out_path)
 
 
 def write_tasks_jsonl(meta_dir: str, all_tasks: list[str]) -> None:
     """Write tasks to JSONL file."""
-    os.makedirs(meta_dir, exist_ok=True)
-    tasks_path = os.path.join(meta_dir, "tasks.jsonl")
-    with open(tasks_path, "w", encoding="utf-8") as f:
+    meta_p = Path(meta_dir)
+    meta_p.mkdir(parents=True, exist_ok=True)
+    tasks_path = meta_p / "tasks.jsonl"
+    with tasks_path.open("w", encoding="utf-8") as f:
         for task_idx, task_text in enumerate(all_tasks):
             f.write(
                 json.dumps({"task_index": task_idx, "task": task_text}, ensure_ascii=False) + "\n"
@@ -250,10 +250,11 @@ def write_tasks_jsonl(meta_dir: str, all_tasks: list[str]) -> None:
 
 def append_episode_meta(meta_dir: str, episode_index: int, length: int, task_text: str) -> None:
     """Append episode metadata to JSONL file."""
-    os.makedirs(meta_dir, exist_ok=True)
-    episodes_path = os.path.join(meta_dir, "episodes.jsonl")
+    meta_p = Path(meta_dir)
+    meta_p.mkdir(parents=True, exist_ok=True)
+    episodes_path = meta_p / "episodes.jsonl"
     rec = {"episode_index": episode_index, "tasks": [task_text], "length": length}
-    with open(episodes_path, "a", encoding="utf-8") as f:
+    with episodes_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
@@ -322,8 +323,9 @@ def write_info_json(
         },
     }
 
-    os.makedirs(meta_dir, exist_ok=True)
-    with open(os.path.join(meta_dir, "info.json"), "w", encoding="utf-8") as f:
+    meta_p = Path(meta_dir)
+    meta_p.mkdir(parents=True, exist_ok=True)
+    with (meta_p / "info.json").open("w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=2)
 
 
@@ -343,15 +345,11 @@ def convert_cleaned_dataset(
     Returns: (num_episodes, num_frames, errors)
     """
 
-    # Find all cleaned HDF5 files
-    if os.path.isfile(cleaned_path):
+    cleaned_p = Path(cleaned_path)
+    if cleaned_p.is_file():
         files = [cleaned_path]
     else:
-        patterns = ["**/*.h5", "**/*.hdf5"]
-        files = []
-        for p in patterns:
-            files.extend(glob.glob(os.path.join(cleaned_path, p), recursive=True))
-        files = sorted(files)
+        files = sorted(list(cleaned_p.rglob("*.h5")) + list(cleaned_p.rglob("*.hdf5")))
 
     if not files:
         print(f"[WARNING] No cleaned HDF5 files found in: {cleaned_path}")
@@ -364,8 +362,9 @@ def convert_cleaned_dataset(
     print(f"Files: {len(files)}")
     print(f"{'=' * 80}\n")
 
-    data_root = os.path.join(output_root, "data")
-    meta_root = os.path.join(output_root, "meta")
+    output_p = Path(output_root)
+    data_root = output_p / "data"
+    meta_root = output_p / "meta"
 
     total_frames = 0
     errors = []
@@ -374,11 +373,11 @@ def convert_cleaned_dataset(
         try:
             ep_idx = episode_offset + local_idx
             chunk_id = ep_idx // chunk_size
-            chunk_dir = os.path.join(data_root, f"chunk-{chunk_id:03d}")
-            os.makedirs(chunk_dir, exist_ok=True)
+            chunk_dir = data_root / f"chunk-{chunk_id:03d}"
+            chunk_dir.mkdir(parents=True, exist_ok=True)
 
             # Load data
-            ee_pose, front_imgs, wrist_imgs, left_imgs, timestamps = load_hdf5(h5p)
+            ee_pose, front_imgs, wrist_imgs, left_imgs, timestamps = load_hdf5(str(h5p))
 
             data = build_episode_data(
                 ee_pose=ee_pose,
@@ -396,16 +395,16 @@ def convert_cleaned_dataset(
             episode_length = len(data["timestamp"])
 
             # Save parquet
-            parquet_path = os.path.join(chunk_dir, f"episode_{ep_idx:06d}.parquet")
-            save_episode_with_datasets(data, parquet_path)
+            parquet_path = chunk_dir / f"episode_{ep_idx:06d}.parquet"
+            save_episode_with_datasets(data, str(parquet_path))
 
             # Append to episodes.jsonl
-            append_episode_meta(meta_root, ep_idx, length=episode_length, task_text=task_text)
+            append_episode_meta(str(meta_root), ep_idx, length=episode_length, task_text=task_text)
 
             total_frames += episode_length
 
         except Exception as e:
-            error_msg = f"Episode {ep_idx} ({os.path.basename(h5p)}): {str(e)}"
+            error_msg = f"Episode {ep_idx} ({Path(h5p).name}): {str(e)}"
             errors.append(error_msg)
             print(f"\n  [✗] ERROR: {error_msg}")
 

@@ -9,7 +9,7 @@ Usage:
 """
 
 import argparse
-import os
+from pathlib import Path
 
 from .pipeline import run_pipeline
 
@@ -27,7 +27,7 @@ def main():
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.config):
+    if not Path(args.config).exists():
         print(f"[ERROR] Config file not found: {args.config}")
         return
 

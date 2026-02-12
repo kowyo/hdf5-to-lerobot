@@ -6,8 +6,8 @@ and conversion process.
 """
 
 import json
-import os
 import shutil
+from pathlib import Path
 from typing import Any
 
 from .cleaning import clean_hdf5_dataset
@@ -23,8 +23,7 @@ def run_pipeline(
 ) -> None:
     """运行完整的清洗+转换流程"""
 
-    # Load config
-    with open(config_path, encoding="utf-8") as f:
+    with Path(config_path).open(encoding="utf-8") as f:
         config: dict[str, Any] = json.load(f)
 
     print("\n" + "=" * 80)
@@ -55,8 +54,7 @@ def run_pipeline(
         },
     )
 
-    # Create temp directory for cleaned data
-    temp_clean_root = config.get("temp_clean_dir", os.path.join(output_root, "_temp_cleaned"))
+    temp_clean_root = config.get("temp_clean_dir", str(Path(output_root) / "_temp_cleaned"))
 
     # Collect all unique tasks
     all_tasks: list[str] = []
@@ -70,20 +68,18 @@ def run_pipeline(
         print(f"  Task {i}: {task}")
     print()
 
-    # Prepare output directories
-    os.makedirs(output_root, exist_ok=True)
-    data_root = os.path.join(output_root, "data")
-    meta_root = os.path.join(output_root, "meta")
-    os.makedirs(data_root, exist_ok=True)
-    os.makedirs(meta_root, exist_ok=True)
+    output_p = Path(output_root)
+    output_p.mkdir(parents=True, exist_ok=True)
+    data_root = output_p / "data"
+    meta_root = output_p / "meta"
+    data_root.mkdir(parents=True, exist_ok=True)
+    meta_root.mkdir(parents=True, exist_ok=True)
 
-    # Write tasks.jsonl
-    write_tasks_jsonl(meta_root, all_tasks)
+    write_tasks_jsonl(str(meta_root), all_tasks)
 
-    # Clear episodes.jsonl
-    episodes_jsonl = os.path.join(meta_root, "episodes.jsonl")
-    if os.path.exists(episodes_jsonl):
-        os.remove(episodes_jsonl)
+    episodes_jsonl = meta_root / "episodes.jsonl"
+    if episodes_jsonl.exists():
+        episodes_jsonl.unlink()
 
     # Process each dataset
     total_episodes = 0
@@ -104,7 +100,7 @@ def run_pipeline(
 
         # Step 1: Clean data
         if not skip_cleaning:
-            cleaned_path = os.path.join(temp_clean_root, f"dataset_{ds_idx}")
+            cleaned_path = str(Path(temp_clean_root) / f"dataset_{ds_idx}")
             num_cleaned, num_frames_cleaned, num_errors = clean_hdf5_dataset(
                 input_path=input_path,
                 output_path=cleaned_path,
@@ -140,7 +136,7 @@ def run_pipeline(
     # Write info.json
     if not skip_conversion:
         write_info_json(
-            meta_root,
+            str(meta_root),
             total_episodes=total_episodes,
             total_frames=total_frames,
             total_tasks=len(all_tasks),
@@ -153,7 +149,7 @@ def run_pipeline(
     if (
         not skip_cleaning
         and not config.get("keep_temp_cleaned", False)
-        and os.path.exists(temp_clean_root)
+        and Path(temp_clean_root).exists()
     ):
         print(f"\n[INFO] Cleaning up temporary directory: {temp_clean_root}")
         shutil.rmtree(temp_clean_root)

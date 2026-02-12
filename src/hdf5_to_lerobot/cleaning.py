@@ -5,8 +5,7 @@ This module provides functions to clean and filter HDF5 files by detecting
 and removing static segments from robot demonstration data.
 """
 
-import glob
-import os
+from pathlib import Path
 
 import h5py
 import numpy as np
@@ -122,8 +121,7 @@ def filter_hdf5_file(
             if filtered_length < cleaning_params["min_episode_length"]:
                 return False, original_length, 0
 
-            # 创建输出文件
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             with h5py.File(output_path, "w") as f_out:
                 # 1. 重新生成连续的timestamp
                 new_timestamp = np.arange(filtered_length, dtype=np.float32) / fps
@@ -164,15 +162,11 @@ def clean_hdf5_dataset(
 ) -> tuple[int, int, int]:
     """清洗单个数据集的所有HDF5文件"""
 
-    # 查找所有HDF5文件
-    if os.path.isfile(input_path):
-        files = [input_path]
+    input_p = Path(input_path)
+    if input_p.is_file():
+        files = [str(input_p)]
     else:
-        patterns = ["**/*.h5", "**/*.hdf5"]
-        files = []
-        for p in patterns:
-            files.extend(glob.glob(os.path.join(input_path, p), recursive=True))
-        files = sorted(files)
+        files = sorted(list(input_p.rglob("*.h5")) + list(input_p.rglob("*.hdf5")))
 
     if not files:
         print(f"[WARNING] No HDF5 files found in: {input_path}")
@@ -194,13 +188,15 @@ def clean_hdf5_dataset(
     }
 
     for _i, file_path in enumerate(tqdm(files, desc="Cleaning")):
-        rel_path = os.path.relpath(file_path, input_path)
-        out_file = os.path.join(output_path, rel_path)
-        os.makedirs(os.path.dirname(out_file), exist_ok=True)
+        rel_path = (
+            Path(file_path).relative_to(input_p) if input_p.is_dir() else Path(file_path).name
+        )
+        out_file = Path(output_path) / rel_path
+        out_file.parent.mkdir(parents=True, exist_ok=True)
 
         success, orig_len, filt_len = filter_hdf5_file(
-            file_path,
-            out_file,
+            str(file_path),
+            str(out_file),
             cleaning_params,
             fps=fps,
         )
