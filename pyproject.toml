@@ -1,5 +1,5 @@
 [project]
-name = "postprocess-franka"
+name = "hdf5-to-lerobot"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
