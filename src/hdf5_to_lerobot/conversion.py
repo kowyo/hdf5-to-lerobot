@@ -5,20 +5,20 @@ This module provides functions to convert cleaned HDF5 data to the LeRobot forma
 used by Pi0.5 and similar robot learning frameworks.
 """
 
-import os
-import json
 import glob
-from typing import List, Optional, Tuple, Dict
-from concurrent.futures import ThreadPoolExecutor
+import json
 import multiprocessing as mp
+import os
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
-import numpy as np
-from PIL import Image
-from scipy.spatial.transform import Rotation as R
-from datasets import Dataset, Features, Image as ImageFeature, Value, Sequence
-from tqdm import tqdm
 import h5py
+import numpy as np
+from datasets import Dataset, Features, Sequence, Value
+from datasets import Image as ImageFeature
+from PIL import Image
+from scipy.spatial.transform import Rotation as Rot
+from tqdm import tqdm
 
 
 def wrap_angle_delta(delta: np.ndarray) -> np.ndarray:
@@ -34,49 +34,51 @@ def get_euler_from_pose(pose_row: np.ndarray) -> np.ndarray:
     """
     dim = len(pose_row)
     if dim == 7:
-        return R.from_rotvec(pose_row[3:6]).as_euler("xyz", degrees=False)
+        return Rot.from_rotvec(pose_row[3:6]).as_euler("xyz", degrees=False)
     elif dim == 8:
-        return R.from_quat(pose_row[3:7]).as_euler("xyz", degrees=False)
+        return Rot.from_quat(pose_row[3:7]).as_euler("xyz", degrees=False)
     else:
         raise ValueError(f"Unsupported ee_pose dimension: {dim}")
 
 
-def compute_actions_from_ee_pose(ee_pose: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def compute_actions_from_ee_pose(ee_pose: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Convert ee_pose trajectory to LeRobot format, auto-detecting 7D or 8D input.
     """
-    T = len(ee_pose)
+    num_frames = len(ee_pose)
     dim = ee_pose.shape[1]
 
     # 1. 自动提取旋转并转为欧拉角
-    euler_angles = np.array([get_euler_from_pose(ee_pose[i]) for i in range(T)])
+    euler_angles = np.array([get_euler_from_pose(ee_pose[i]) for i in range(num_frames)])
 
     # 2. 确定夹爪索引
     gripper_idx = 6 if dim == 7 else 7
 
     # 3. Build state (8D)
-    states = np.zeros((T, 8), dtype=np.float32)
+    states = np.zeros((num_frames, 8), dtype=np.float32)
     states[:, :3] = ee_pose[:, :3]
     states[:, 3:6] = euler_angles
     states[:, 6] = ee_pose[:, gripper_idx] / 2
     states[:, 7] = -ee_pose[:, gripper_idx] / 2
 
     # 4. Build actions (7D)
-    actions = np.zeros((T, 7), dtype=np.float32)
+    actions = np.zeros((num_frames, 7), dtype=np.float32)
 
-    for t in range(T - 1):
+    for t in range(num_frames - 1):
         actions[t, :3] = ee_pose[t + 1, :3] - ee_pose[t, :3]
         delta_rot = euler_angles[t + 1] - euler_angles[t]
         actions[t, 3:6] = wrap_angle_delta(delta_rot)
         actions[t, 6] = 1.0 if ee_pose[t + 1, gripper_idx] >= 0.07 else 0.0
 
-    if T > 1:
+    if num_frames > 1:
         actions[-1] = actions[-2]
 
     return states, actions
 
 
-def load_hdf5(hdf5_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+def load_hdf5(
+    hdf5_path: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
     """Load HDF5 file with flexible structure support."""
     with h5py.File(hdf5_path, "r") as f:
         if "observations" not in f or "ee_pose" not in f["observations"]:
@@ -112,11 +114,17 @@ def load_hdf5(hdf5_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.nd
             timestamps = f["observations"]["timestamp"][:]
 
     # Truncate to minimum length
-    T = min(len(ee_pose), len(front_imgs), len(wrist_imgs), len(left_imgs))
+    num_frames = min(len(ee_pose), len(front_imgs), len(wrist_imgs), len(left_imgs))
     if timestamps is not None:
-        T = min(T, len(timestamps))
+        num_frames = min(num_frames, len(timestamps))
 
-    return ee_pose[:T], front_imgs[:T], wrist_imgs[:T], left_imgs[:T], timestamps[:T] if timestamps is not None else None
+    return (
+        ee_pose[:num_frames],
+        front_imgs[:num_frames],
+        wrist_imgs[:num_frames],
+        left_imgs[:num_frames],
+        timestamps[:num_frames] if timestamps is not None else None,
+    )
 
 
 def build_episode_data(
@@ -124,7 +132,7 @@ def build_episode_data(
     front_imgs: np.ndarray,
     wrist_imgs: np.ndarray,
     left_imgs: np.ndarray,
-    timestamps: Optional[np.ndarray],
+    timestamps: np.ndarray | None,
     episode_index: int,
     fps: float,
     image_size: int,
@@ -133,11 +141,11 @@ def build_episode_data(
 ) -> dict:
     """Build episode data as dict for HuggingFace datasets in Pi0.5 format."""
 
-    T = len(ee_pose)
+    num_frames = len(ee_pose)
     states, actions = compute_actions_from_ee_pose(ee_pose)
 
     if timestamps is None:
-        timestamps = np.arange(T, dtype=np.float32) / float(fps)
+        timestamps = np.arange(num_frames, dtype=np.float32) / float(fps)
     else:
         timestamps = (timestamps - timestamps[0]).astype(np.float32)
 
@@ -158,21 +166,27 @@ def build_episode_data(
             return list(executor.map(resize_single, imgs))
 
     # TODO: 不进行剪裁
-    CROP_CONFIG = {"front": None, "wrist": None, "left": None}
+    crop_config = {"front": None, "wrist": None, "left": None}
 
     if not use_last:
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
-                "front": executor.submit(resize_batch, front_imgs, image_size, CROP_CONFIG["front"]),
-                "wrist": executor.submit(resize_batch, wrist_imgs, image_size, CROP_CONFIG["wrist"]),
-                "left": executor.submit(resize_batch, left_imgs, image_size, CROP_CONFIG["left"]),
+                "front": executor.submit(
+                    resize_batch, front_imgs, image_size, crop_config["front"]
+                ),
+                "wrist": executor.submit(
+                    resize_batch, wrist_imgs, image_size, crop_config["wrist"]
+                ),
+                "left": executor.submit(resize_batch, left_imgs, image_size, crop_config["left"]),
             }
             front_resized = futures["front"].result()
             wrist_resized = futures["wrist"].result()
             left_resized = futures["left"].result()
 
     else:
-        last_resized = cv2.resize(front_imgs[-1], (image_size, image_size), interpolation=cv2.INTER_AREA)
+        last_resized = cv2.resize(
+            front_imgs[-1], (image_size, image_size), interpolation=cv2.INTER_AREA
+        )
         last_pil = Image.fromarray(last_resized)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -183,7 +197,7 @@ def build_episode_data(
             front_resized = futures["front"].result()
             wrist_resized = futures["wrist"].result()
 
-        left_resized = [last_pil] * T
+        left_resized = [last_pil] * num_frames
 
     data = {
         "image": front_resized,
@@ -192,10 +206,10 @@ def build_episode_data(
         "state": states.tolist(),
         "actions": actions.tolist(),
         "timestamp": timestamps.tolist(),
-        "frame_index": np.arange(T, dtype=np.int64).tolist(),
-        "episode_index": np.full(T, episode_index, dtype=np.int64).tolist(),
-        "index": np.arange(T, dtype=np.int64).tolist(),
-        "task_index": np.full(T, task_index, dtype=np.int64).tolist(),
+        "frame_index": np.arange(num_frames, dtype=np.int64).tolist(),
+        "episode_index": np.full(num_frames, episode_index, dtype=np.int64).tolist(),
+        "index": np.arange(num_frames, dtype=np.int64).tolist(),
+        "task_index": np.full(num_frames, task_index, dtype=np.int64).tolist(),
     }
 
     return data
@@ -223,13 +237,15 @@ def save_episode_with_datasets(data: dict, out_path: str) -> None:
     dataset.to_parquet(out_path)
 
 
-def write_tasks_jsonl(meta_dir: str, all_tasks: List[str]) -> None:
+def write_tasks_jsonl(meta_dir: str, all_tasks: list[str]) -> None:
     """Write tasks to JSONL file."""
     os.makedirs(meta_dir, exist_ok=True)
     tasks_path = os.path.join(meta_dir, "tasks.jsonl")
     with open(tasks_path, "w", encoding="utf-8") as f:
         for task_idx, task_text in enumerate(all_tasks):
-            f.write(json.dumps({"task_index": task_idx, "task": task_text}, ensure_ascii=False) + "\n")
+            f.write(
+                json.dumps({"task_index": task_idx, "task": task_text}, ensure_ascii=False) + "\n"
+            )
 
 
 def append_episode_meta(meta_dir: str, episode_index: int, length: int, task_text: str) -> None:
@@ -265,14 +281,38 @@ def write_info_json(
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
         "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
         "features": {
-            "image": {"dtype": "image", "shape": [image_size, image_size, 3], "names": ["height", "width", "channel"]},
-            "wrist_image": {"dtype": "image", "shape": [image_size, image_size, 3], "names": ["height", "width", "channel"]},
-            "left_image": {"dtype": "image", "shape": [image_size, image_size, 3], "names": ["height", "width", "channel"]},
-            "state": {"dtype": "float32", "shape": [8], "names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper", "gripper"]},
+            "image": {
+                "dtype": "image",
+                "shape": [image_size, image_size, 3],
+                "names": ["height", "width", "channel"],
+            },
+            "wrist_image": {
+                "dtype": "image",
+                "shape": [image_size, image_size, 3],
+                "names": ["height", "width", "channel"],
+            },
+            "left_image": {
+                "dtype": "image",
+                "shape": [image_size, image_size, 3],
+                "names": ["height", "width", "channel"],
+            },
+            "state": {
+                "dtype": "float32",
+                "shape": [8],
+                "names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper", "gripper"],
+            },
             "actions": {
                 "dtype": "float32",
                 "shape": [7],
-                "names": ["delta_x", "delta_y", "delta_z", "delta_roll", "delta_pitch", "delta_yaw", "gripper"],
+                "names": [
+                    "delta_x",
+                    "delta_y",
+                    "delta_z",
+                    "delta_roll",
+                    "delta_pitch",
+                    "delta_yaw",
+                    "gripper",
+                ],
             },
             "timestamp": {"dtype": "float32", "shape": [1], "names": None},
             "frame_index": {"dtype": "int64", "shape": [1], "names": None},
@@ -297,7 +337,7 @@ def convert_cleaned_dataset(
     image_size: int,
     chunk_size: int,
     use_last: bool,
-) -> Tuple[int, int, List[str]]:
+) -> tuple[int, int, list[str]]:
     """
     Convert a single cleaned dataset to LeRobot format.
     Returns: (num_episodes, num_frames, errors)
@@ -317,12 +357,12 @@ def convert_cleaned_dataset(
         print(f"[WARNING] No cleaned HDF5 files found in: {cleaned_path}")
         return 0, 0, []
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"Converting Dataset: {cleaned_path}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"Task: {task_text}")
     print(f"Files: {len(files)}")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     data_root = os.path.join(output_root, "data")
     meta_root = os.path.join(output_root, "meta")

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 CLI entry point for the HDF5 to LeRobot Pipeline.
 
@@ -9,8 +8,9 @@ Usage:
     python -m src --config config.json --skip-conversion
 """
 
-import os
 import argparse
+import os
+
 from .pipeline import run_pipeline
 
 
@@ -31,7 +31,9 @@ def main():
         print(f"[ERROR] Config file not found: {args.config}")
         return
 
-    run_pipeline(args.config, skip_cleaning=args.skip_cleaning, skip_conversion=args.skip_conversion)
+    run_pipeline(
+        args.config, skip_cleaning=args.skip_cleaning, skip_conversion=args.skip_conversion
+    )
 
 
 if __name__ == "__main__":

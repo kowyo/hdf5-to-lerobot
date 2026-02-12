@@ -5,25 +5,27 @@ This module provides the high-level pipeline that orchestrates the cleaning
 and conversion process.
 """
 
-import os
 import json
+import os
 import shutil
-from typing import List, Dict, Any
+from typing import Any
 
 from .cleaning import clean_hdf5_dataset
 from .conversion import (
     convert_cleaned_dataset,
-    write_tasks_jsonl,
     write_info_json,
+    write_tasks_jsonl,
 )
 
 
-def run_pipeline(config_path: str, skip_cleaning: bool = False, skip_conversion: bool = False) -> None:
+def run_pipeline(
+    config_path: str, skip_cleaning: bool = False, skip_conversion: bool = False
+) -> None:
     """运行完整的清洗+转换流程"""
 
     # Load config
-    with open(config_path, "r", encoding="utf-8") as f:
-        config: Dict[str, Any] = json.load(f)
+    with open(config_path, encoding="utf-8") as f:
+        config: dict[str, Any] = json.load(f)
 
     print("\n" + "=" * 80)
     print("HDF5 to LeRobot Pipeline")
@@ -57,7 +59,7 @@ def run_pipeline(config_path: str, skip_cleaning: bool = False, skip_conversion:
     temp_clean_root = config.get("temp_clean_dir", os.path.join(output_root, "_temp_cleaned"))
 
     # Collect all unique tasks
-    all_tasks: List[str] = []
+    all_tasks: list[str] = []
     for ds in datasets:
         task = ds["task"]
         if task not in all_tasks:
@@ -86,19 +88,19 @@ def run_pipeline(config_path: str, skip_cleaning: bool = False, skip_conversion:
     # Process each dataset
     total_episodes = 0
     total_frames = 0
-    all_errors: List[str] = []
+    all_errors: list[str] = []
 
     for ds_idx, ds_config in enumerate(datasets):
         input_path = ds_config["path"]
         task_text = ds_config["task"]
         task_index = all_tasks.index(task_text)
 
-        print(f"\n{'#'*80}")
+        print(f"\n{'#' * 80}")
         print(f"Dataset {ds_idx + 1}/{len(datasets)}")
-        print(f"{'#'*80}")
+        print(f"{'#' * 80}")
         print(f"Input: {input_path}")
         print(f"Task: {task_text}")
-        print(f"{'#'*80}\n")
+        print(f"{'#' * 80}\n")
 
         # Step 1: Clean data
         if not skip_cleaning:
@@ -148,10 +150,13 @@ def run_pipeline(config_path: str, skip_cleaning: bool = False, skip_conversion:
         )
 
     # Clean up temp directory
-    if not skip_cleaning and not config.get("keep_temp_cleaned", False):
-        if os.path.exists(temp_clean_root):
-            print(f"\n[INFO] Cleaning up temporary directory: {temp_clean_root}")
-            shutil.rmtree(temp_clean_root)
+    if (
+        not skip_cleaning
+        and not config.get("keep_temp_cleaned", False)
+        and os.path.exists(temp_clean_root)
+    ):
+        print(f"\n[INFO] Cleaning up temporary directory: {temp_clean_root}")
+        shutil.rmtree(temp_clean_root)
 
     # Final summary
     print("\n" + "=" * 80)

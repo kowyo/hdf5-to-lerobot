@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 HDF5 to LeRobot Pipeline: Clean + Convert
 LeRobot 数据集格式参考 Pi0.5 版本
@@ -8,9 +7,9 @@ This is a thin wrapper around the hdf5_to_lerobot library for backward compatibi
 For new code, consider using: python -m hdf5_to_lerobot
 """
 
+import argparse
 import os
 import sys
-import argparse
 
 # Add src to path for development mode
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
@@ -35,7 +34,9 @@ def main():
         print(f"[ERROR] Config file not found: {args.config}")
         return
 
-    run_pipeline(args.config, skip_cleaning=args.skip_cleaning, skip_conversion=args.skip_conversion)
+    run_pipeline(
+        args.config, skip_cleaning=args.skip_cleaning, skip_conversion=args.skip_conversion
+    )
 
 
 if __name__ == "__main__":

@@ -5,15 +5,15 @@ This module provides functions to clean and filter HDF5 files by detecting
 and removing static segments from robot demonstration data.
 """
 
-import os
 import glob
-from typing import Dict, Tuple
-from tqdm import tqdm
+import os
+
 import h5py
 import numpy as np
+from tqdm import tqdm
 
 
-def parse_ee_pose(ee_pose: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def parse_ee_pose(ee_pose: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     自动识别ee_pose维度并提取组件
     Returns: pos (T,3), rot (T,3 or 4), gripper (T,)
@@ -30,12 +30,12 @@ def parse_ee_pose(ee_pose: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarr
 
 def analyze_episode_motion(ee_pose: np.ndarray, window_size: int = 5) -> np.ndarray:
     """Analyze motion in an episode using sliding window variance."""
-    T = len(ee_pose)
-    motion_score = np.zeros(T)
+    num_frames = len(ee_pose)
+    motion_score = np.zeros(num_frames)
     pos, rot, gripper = parse_ee_pose(ee_pose)
 
-    for i in range(T):
-        start, end = max(0, i - window_size), min(T, i + window_size + 1)
+    for i in range(num_frames):
+        start, end = max(0, i - window_size), min(num_frames, i + window_size + 1)
         pos_var = np.var(pos[start:end], axis=0).sum()
         rot_var = np.var(rot[start:end], axis=0).sum()
         gripper_var = np.var(gripper[start:end])
@@ -53,11 +53,11 @@ def detect_static_segments_advanced(
 ) -> np.ndarray:
     """
     Detect and mark static segments in the episode data.
-    
+
     Returns a boolean mask where True means the frame should be kept.
     """
-    T = len(ee_pose)
-    if T == 0:
+    num_frames = len(ee_pose)
+    if num_frames == 0:
         return np.array([], dtype=bool)
 
     motion_score = analyze_episode_motion(ee_pose)
@@ -68,24 +68,28 @@ def detect_static_segments_advanced(
     gripper_delta = np.abs(np.diff(gripper, axis=0))
 
     is_static = np.concatenate(
-        [[False], (pos_delta < pos_threshold) & (rot_delta < rot_threshold) & (gripper_delta < gripper_threshold)]
+        [
+            [False],
+            (pos_delta < pos_threshold)
+            & (rot_delta < rot_threshold)
+            & (gripper_delta < gripper_threshold),
+        ]
     )
     low_motion = motion_score < motion_score_threshold
     is_abnormal = is_static & low_motion
 
-    mask = np.ones(T, dtype=bool)
+    mask = np.ones(num_frames, dtype=bool)
     i = 0
-    while i < T:
+    while i < num_frames:
         if is_abnormal[i]:
             j = i
-            while j < T and is_abnormal[j]:
+            while j < num_frames and is_abnormal[j]:
                 j += 1
-            if (j - i) >= min_static_frames:
-                if not (
-                    (i > 0 and motion_score[i - 1] > motion_score_threshold * 2)
-                    and (j < T and motion_score[j] > motion_score_threshold * 2)
-                ):
-                    mask[i:j] = False
+            if (j - i) >= min_static_frames and not (
+                (i > 0 and motion_score[i - 1] > motion_score_threshold * 2)
+                and (j < num_frames and motion_score[j] > motion_score_threshold * 2)
+            ):
+                mask[i:j] = False
             i = j
         else:
             i += 1
@@ -95,9 +99,9 @@ def detect_static_segments_advanced(
 def filter_hdf5_file(
     input_path: str,
     output_path: str,
-    cleaning_params: Dict,
+    cleaning_params: dict,
     fps: float = 10.0,
-) -> Tuple[bool, int, int]:
+) -> tuple[bool, int, int]:
     """过滤单个HDF5文件"""
     try:
         with h5py.File(input_path, "r") as f_in:
@@ -135,10 +139,10 @@ def filter_hdf5_file(
                 obs_group = f_out.create_group("observations")
                 f_in_obs = f_in["observations"]
 
-                for key in f_in_obs.keys():
+                for key in f_in_obs:
                     if key == "images":
                         img_group = obs_group.create_group("images")
-                        for img_key in f_in_obs["images"].keys():
+                        for img_key in f_in_obs["images"]:
                             img_data = f_in_obs["images"][img_key][:]
                             img_group.create_dataset(img_key, data=img_data[mask])
                     elif key == "robot_base_pose_in_world":
@@ -155,7 +159,9 @@ def filter_hdf5_file(
         return False, 0, 0
 
 
-def clean_hdf5_dataset(input_path: str, output_path: str, cleaning_params: Dict, fps: float) -> Tuple[int, int, int]:
+def clean_hdf5_dataset(
+    input_path: str, output_path: str, cleaning_params: dict, fps: float
+) -> tuple[int, int, int]:
     """清洗单个数据集的所有HDF5文件"""
 
     # 查找所有HDF5文件
@@ -172,12 +178,12 @@ def clean_hdf5_dataset(input_path: str, output_path: str, cleaning_params: Dict,
         print(f"[WARNING] No HDF5 files found in: {input_path}")
         return 0, 0, 0
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"Cleaning Dataset: {input_path}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"Found {len(files)} HDF5 files")
     print(f"Output: {output_path}")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     stats = {
         "success": 0,
@@ -187,7 +193,7 @@ def clean_hdf5_dataset(input_path: str, output_path: str, cleaning_params: Dict,
         "filtered_frames": 0,
     }
 
-    for i, file_path in enumerate(tqdm(files, desc="Cleaning")):
+    for _i, file_path in enumerate(tqdm(files, desc="Cleaning")):
         rel_path = os.path.relpath(file_path, input_path)
         out_file = os.path.join(output_path, rel_path)
         os.makedirs(os.path.dirname(out_file), exist_ok=True)
@@ -209,9 +215,9 @@ def clean_hdf5_dataset(input_path: str, output_path: str, cleaning_params: Dict,
         else:
             stats["error"] += 1
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Cleaning Summary")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"Successfully cleaned: {stats['success']}")
     print(f"Skipped (too short):  {stats['skipped']}")
     print(f"Errors:               {stats['error']}")
@@ -220,6 +226,6 @@ def clean_hdf5_dataset(input_path: str, output_path: str, cleaning_params: Dict,
     if stats["original_frames"] > 0:
         kept_ratio = stats["filtered_frames"] / stats["original_frames"] * 100
         print(f"Kept ratio:           {kept_ratio:.1f}%")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     return stats["success"], stats["filtered_frames"], stats["error"]
