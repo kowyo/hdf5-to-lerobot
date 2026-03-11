@@ -15,15 +15,18 @@ from .cleaning import (
     parse_ee_pose,
 )
 from .conversion import (
+    aggregate_stats,
     append_episode_meta,
     build_episode_data,
     compute_actions_from_ee_pose,
+    compute_episode_stats,
     convert_cleaned_dataset,
     get_euler_from_pose,
     load_hdf5,
     save_episode_with_datasets,
     wrap_angle_delta,
     write_info_json,
+    write_stats_json,
     write_tasks_jsonl,
 )
 from .pipeline import run_pipeline
@@ -39,11 +42,14 @@ __all__ = [
     "wrap_angle_delta",
     "get_euler_from_pose",
     "compute_actions_from_ee_pose",
+    "compute_episode_stats",
     "load_hdf5",
     "build_episode_data",
     "save_episode_with_datasets",
     "write_tasks_jsonl",
     "append_episode_meta",
+    "aggregate_stats",
+    "write_stats_json",
     "write_info_json",
     "convert_cleaned_dataset",
     # Pipeline

@@ -12,8 +12,10 @@ from typing import Any
 
 from .cleaning import clean_hdf5_dataset
 from .conversion import (
+    aggregate_stats,
     convert_cleaned_dataset,
     write_info_json,
+    write_stats_json,
     write_tasks_jsonl,
 )
 
@@ -40,6 +42,7 @@ def run_pipeline(
     image_size = config.get("image_size", 224)
     chunk_size = config.get("chunk_size", 1000)
     use_last = config.get("use_last", False)
+    write_stats = config.get("write_stats", True)
     datasets = config["datasets"]
 
     # TODO: Cleaning parameters
@@ -85,6 +88,7 @@ def run_pipeline(
     total_episodes = 0
     total_frames = 0
     all_errors: list[str] = []
+    all_episode_stats = []
 
     for ds_idx, ds_config in enumerate(datasets):
         input_path = ds_config["path"]
@@ -117,7 +121,7 @@ def run_pipeline(
 
         # Step 2: Convert to LeRobot format
         if not skip_conversion:
-            num_episodes, num_frames, errors = convert_cleaned_dataset(
+            num_episodes, num_frames, errors, episode_stats = convert_cleaned_dataset(
                 cleaned_path=cleaned_path,
                 output_root=output_root,
                 task_text=task_text,
@@ -132,6 +136,7 @@ def run_pipeline(
             total_episodes += num_episodes
             total_frames += num_frames
             all_errors.extend(errors)
+            all_episode_stats.extend(episode_stats)
 
     # Write info.json
     if not skip_conversion:
@@ -144,6 +149,9 @@ def run_pipeline(
             chunk_size=chunk_size,
             image_size=image_size,
         )
+        if write_stats:
+            dataset_stats = aggregate_stats(all_episode_stats)
+            write_stats_json(str(meta_root), dataset_stats)
 
     # Clean up temp directory
     if (

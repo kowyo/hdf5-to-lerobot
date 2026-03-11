@@ -9,6 +9,7 @@ import json
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import cv2
 import h5py
@@ -18,6 +19,133 @@ from datasets import Image as ImageFeature
 from PIL import Image
 from scipy.spatial.transform import Rotation as Rot
 from tqdm import tqdm
+
+
+def _estimate_num_samples(
+    dataset_len: int, min_num_samples: int = 100, max_num_samples: int = 10_000, power: float = 0.75
+) -> int:
+    if dataset_len < min_num_samples:
+        min_num_samples = dataset_len
+    return max(min_num_samples, min(int(dataset_len**power), max_num_samples))
+
+
+def _sample_indices(data_len: int) -> list[int]:
+    num_samples = _estimate_num_samples(data_len)
+    return np.round(np.linspace(0, data_len - 1, num_samples)).astype(int).tolist()
+
+
+def _get_feature_stats(
+    array: np.ndarray, axis: int | tuple[int, ...], keepdims: bool
+) -> dict[str, np.ndarray]:
+    return {
+        "min": np.min(array, axis=axis, keepdims=keepdims),
+        "max": np.max(array, axis=axis, keepdims=keepdims),
+        "mean": np.mean(array, axis=axis, keepdims=keepdims),
+        "std": np.std(array, axis=axis, keepdims=keepdims),
+        "count": np.array([len(array)]),
+    }
+
+
+def compute_episode_stats(data: dict[str, Any]) -> dict[str, dict[str, np.ndarray]]:
+    """Compute per-episode stats in LeRobot v2.0-compatible shape conventions."""
+    ep_stats: dict[str, dict[str, np.ndarray]] = {}
+
+    for key, values in data.items():
+        if key in ["image", "wrist_image", "left_image"]:
+            # Sample image frames and convert to (N, C, H, W) float32 in [0,1].
+            sampled = [values[i] for i in _sample_indices(len(values))]
+            arr = np.stack([np.asarray(img, dtype=np.uint8) for img in sampled], axis=0)
+            arr = np.transpose(arr, (0, 3, 1, 2)).astype(np.float32) / 255.0
+            stats = _get_feature_stats(arr, axis=(0, 2, 3), keepdims=True)
+            ep_stats[key] = {
+                k: v if k == "count" else np.squeeze(v, axis=0) for k, v in stats.items()
+            }
+            continue
+
+        arr = np.asarray(values)
+        if arr.dtype.kind in {"U", "S", "O"}:
+            continue
+
+        reduce_axis = 0
+        keepdims = arr.ndim == 1
+        ep_stats[key] = _get_feature_stats(arr, axis=reduce_axis, keepdims=keepdims)
+
+    return ep_stats
+
+
+def _assert_type_and_shape(stats_list: list[dict[str, dict[str, np.ndarray]]]) -> None:
+    for i in range(len(stats_list)):
+        for fkey in stats_list[i]:
+            for k, v in stats_list[i][fkey].items():
+                if not isinstance(v, np.ndarray):
+                    raise ValueError(
+                        f"Stats must be composed of numpy array, but key '{k}' of feature '{fkey}' is of type '{type(v)}' instead."
+                    )
+                if v.ndim == 0:
+                    raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
+                if k == "count" and v.shape != (1,):
+                    raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
+                if "image" in fkey and k != "count" and v.shape != (3, 1, 1):
+                    raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
+
+
+def _aggregate_feature_stats(stats_ft_list: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    means = np.stack([s["mean"] for s in stats_ft_list])
+    variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
+    counts = np.stack([s["count"] for s in stats_ft_list])
+    total_count = counts.sum(axis=0)
+
+    while counts.ndim < means.ndim:
+        counts = np.expand_dims(counts, axis=-1)
+
+    total_mean = (means * counts).sum(axis=0) / total_count
+    delta_means = means - total_mean
+    total_variance = ((variances + delta_means**2) * counts).sum(axis=0) / total_count
+
+    return {
+        "min": np.min(np.stack([s["min"] for s in stats_ft_list]), axis=0),
+        "max": np.max(np.stack([s["max"] for s in stats_ft_list]), axis=0),
+        "mean": total_mean,
+        "std": np.sqrt(total_variance),
+        "count": total_count,
+    }
+
+
+def aggregate_stats(
+    stats_list: list[dict[str, dict[str, np.ndarray]]],
+) -> dict[str, dict[str, np.ndarray]]:
+    """Aggregate stats from multiple compute_stats outputs into a single set of stats."""
+    if not stats_list:
+        return {}
+
+    _assert_type_and_shape(stats_list)
+
+    data_keys = {key for stats in stats_list for key in stats}
+    aggregated_stats: dict[str, dict[str, np.ndarray]] = {}
+
+    for key in data_keys:
+        stats_with_key = [stats[key] for stats in stats_list if key in stats]
+        aggregated_stats[key] = _aggregate_feature_stats(stats_with_key)
+
+    return aggregated_stats
+
+
+def write_stats_json(meta_dir: str, stats: dict[str, dict[str, np.ndarray]]) -> None:
+    """Write legacy v2.0 aggregate stats file (meta/stats.json)."""
+
+    def _to_python(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: _to_python(v) for k, v in obj.items()}
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.generic):
+            return obj.item()
+        return obj
+
+    meta_p = Path(meta_dir)
+    meta_p.mkdir(parents=True, exist_ok=True)
+    with (meta_p / "stats.json").open("w", encoding="utf-8") as f:
+        json.dump(_to_python(stats), f, ensure_ascii=False, indent=2)
 
 
 def wrap_angle_delta(delta: np.ndarray) -> np.ndarray:
@@ -339,10 +467,10 @@ def convert_cleaned_dataset(
     image_size: int,
     chunk_size: int,
     use_last: bool,
-) -> tuple[int, int, list[str]]:
+) -> tuple[int, int, list[str], list[dict[str, dict[str, np.ndarray]]]]:
     """
     Convert a single cleaned dataset to LeRobot format.
-    Returns: (num_episodes, num_frames, errors)
+    Returns: (num_episodes, num_frames, errors, episode_stats)
     """
 
     cleaned_p = Path(cleaned_path)
@@ -353,7 +481,7 @@ def convert_cleaned_dataset(
 
     if not files:
         print(f"[WARNING] No cleaned HDF5 files found in: {cleaned_path}")
-        return 0, 0, []
+        return 0, 0, [], []
 
     print(f"\n{'=' * 80}")
     print(f"Converting Dataset: {cleaned_path}")
@@ -368,6 +496,7 @@ def convert_cleaned_dataset(
 
     total_frames = 0
     errors = []
+    episode_stats: list[dict[str, dict[str, np.ndarray]]] = []
 
     for local_idx, h5p in enumerate(tqdm(files, desc="Converting")):
         try:
@@ -402,10 +531,11 @@ def convert_cleaned_dataset(
             append_episode_meta(str(meta_root), ep_idx, length=episode_length, task_text=task_text)
 
             total_frames += episode_length
+            episode_stats.append(compute_episode_stats(data))
 
         except Exception as e:
             error_msg = f"Episode {ep_idx} ({Path(h5p).name}): {str(e)}"
             errors.append(error_msg)
             print(f"\n  [✗] ERROR: {error_msg}")
 
-    return len(files) - len(errors), total_frames, errors
+    return len(files) - len(errors), total_frames, errors, episode_stats

@@ -23,5 +23,5 @@ make download-dataset REPO=<repo_id>
 Run the pipeline:
 
 ```bash
-uv run python -m hdf5_to_lerobot --config /path/to/config.json
+uv run hdf5-to-lerobot --config configs/default_config.json
 ```
