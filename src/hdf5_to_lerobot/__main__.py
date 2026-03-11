@@ -19,7 +19,7 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="/scratch/e1583450/VLA_Flywheel/utils/dataset/1-convert_config.json",
+        default="configs/default.json",
         help="Path to pipeline config JSON",
     )
     parser.add_argument("--skip-cleaning", action="store_true", help="Skip cleaning step")
