@@ -1,8 +1,8 @@
-.PHONY: setup install-hooks check format test clean
+.PHONY: prepare install-hooks check format test clean
 
-# Setup development environment
-setup:
-	uv sync
+# Prepare development environment
+prepare:
+	uv sync --all-groups
 	$(MAKE) install-hooks
 
 # Install pre-commit hooks
@@ -39,7 +39,7 @@ download-dataset:
 # Show help
 help:
 	@echo "Available targets:"
-	@echo "  setup        - Install dependencies and pre-commit hooks"
+	@echo "  prepare        - Install dependencies and pre-commit hooks"
 	@echo "  install-hooks- Install pre-commit hooks only"
 	@echo "  check        - Run all pre-commit checks on all files"
 	@echo "  lint         - Run ruff linter with auto-fix"
