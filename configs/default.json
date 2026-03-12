@@ -8,7 +8,7 @@
   "keep_temp_cleaned": false,
   "temp_clean_dir": "data/lerobot_dataset_reconvert_v20/_temp_cleaned",
   "cleaning": {
-    "num_workers": 0,
+    "num_workers": 60,
     "gripper_threshold": 0.0005,
     "pos_threshold": 0.0005,
     "rot_threshold": 0.005,
