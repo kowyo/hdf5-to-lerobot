@@ -265,6 +265,7 @@ def build_episode_data(
     image_size: int,
     task_index: int = 0,
     use_last: bool = False,
+    frame_offset: int = 0,
 ) -> dict:
     """Build episode data as dict for HuggingFace datasets in Pi0.5 format."""
 
@@ -335,7 +336,7 @@ def build_episode_data(
         "timestamp": timestamps.tolist(),
         "frame_index": np.arange(num_frames, dtype=np.int64).tolist(),
         "episode_index": np.full(num_frames, episode_index, dtype=np.int64).tolist(),
-        "index": np.arange(num_frames, dtype=np.int64).tolist(),
+        "index": (frame_offset + np.arange(num_frames, dtype=np.int64)).tolist(),
         "task_index": np.full(num_frames, task_index, dtype=np.int64).tolist(),
     }
 
@@ -519,6 +520,7 @@ def convert_cleaned_dataset(
                 image_size=image_size,
                 task_index=task_index,
                 use_last=use_last,
+                frame_offset=total_frames,
             )
 
             episode_length = len(data["timestamp"])
