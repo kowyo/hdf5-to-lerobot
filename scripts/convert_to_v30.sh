@@ -80,6 +80,11 @@ TMP_ROOT=$(mktemp -d)
 mkdir -p "$TMP_ROOT/$(dirname "$REPO_ID")"
 ln -s "$(pwd)/$OUTPUT_ROOT" "$TMP_ROOT/$REPO_ID"
 
+if [[ "$PUSH_TO_HUB" == "true" ]]; then
+    step "Ensuring Hugging Face dataset repo exists"
+    hf repo create "$REPO_ID" --repo-type dataset --exist-ok
+fi
+
 uv run python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 \
     --repo-id="$REPO_ID" \
     --root="$TMP_ROOT" \
