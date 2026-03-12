@@ -105,7 +105,7 @@ from huggingface_hub import HfApi
 HfApi().upload_folder(folder_path='$OUTPUT_ROOT', repo_id='$REPO_ID', repo_type='dataset')
 "
     step "Tagging dataset as v3.0"
-    hf repo tag create "$REPO_ID" v3.0 --repo-type dataset -m "LeRobot codebase v3.0"
+    hf repo tag create "$REPO_ID" v3.0 --repo-type dataset -m "LeRobot codebase v3.0" || true
 fi
 
 echo ""
