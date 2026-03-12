@@ -32,6 +32,8 @@ def run_pipeline(
     print("HDF5 to LeRobot Pipeline")
     print("=" * 80)
     print(f"Config: {config_path}")
+    num_workers = int(config.get("num_workers", config.get("cleaning", {}).get("num_workers", 1)))
+    print(f"Workers: {num_workers}")
     print(f"Skip cleaning: {skip_cleaning}")
     print(f"Skip conversion: {skip_conversion}")
     print("=" * 80 + "\n")
@@ -49,7 +51,6 @@ def run_pipeline(
     cleaning_params = config.get(
         "cleaning",
         {
-            "num_workers": 1,
             "gripper_threshold": 0.0005,
             "pos_threshold": 0.0005,
             "rot_threshold": 0.005,
@@ -59,9 +60,8 @@ def run_pipeline(
     )
 
     temp_clean_root = config.get("temp_clean_dir", str(Path(output_root) / "_temp_cleaned"))
-    cleaning_workers = int(cleaning_params.get("num_workers", 1))
-    conversion_params = config.get("conversion", {})
-    conversion_workers = int(conversion_params.get("num_workers", cleaning_workers))
+    cleaning_workers = num_workers
+    conversion_workers = num_workers
 
     # Collect all unique tasks
     all_tasks: list[str] = []
