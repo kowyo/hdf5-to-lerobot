@@ -55,11 +55,16 @@ echo "  Config:      $CONFIG"
 echo "  Output root: $OUTPUT_ROOT"
 echo "  Repo ID:     $REPO_ID"
 echo "  Push to hub: $PUSH_TO_HUB"
+echo "  Skip clean:  $SKIP_CLEANING"
 echo "════════════════════════════════════════════════════════════════════════════════"
 
 # ── Step 1: HDF5 → v2.0 ───────────────────────────────────────────────────────
 step "Step 1/3 — HDF5 → v2.0"
-uv run python -m hdf5_to_lerobot --config "$CONFIG" ${SKIP_CLEANING:+--skip-cleaning}
+if [[ "$SKIP_CLEANING" == "true" ]]; then
+    uv run python -m hdf5_to_lerobot --config "$CONFIG" --skip-cleaning
+else
+    uv run python -m hdf5_to_lerobot --config "$CONFIG"
+fi
 
 # ── Step 2: v2.0 → v2.1 ───────────────────────────────────────────────────────
 step "Step 2/3 — v2.0 → v2.1"

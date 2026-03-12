@@ -49,6 +49,7 @@ def run_pipeline(
     cleaning_params = config.get(
         "cleaning",
         {
+            "num_workers": 1,
             "gripper_threshold": 0.0005,
             "pos_threshold": 0.0005,
             "rot_threshold": 0.005,
@@ -58,6 +59,9 @@ def run_pipeline(
     )
 
     temp_clean_root = config.get("temp_clean_dir", str(Path(output_root) / "_temp_cleaned"))
+    cleaning_workers = int(cleaning_params.get("num_workers", 1))
+    conversion_params = config.get("conversion", {})
+    conversion_workers = int(conversion_params.get("num_workers", cleaning_workers))
 
     # Collect all unique tasks
     all_tasks: list[str] = []
@@ -110,6 +114,7 @@ def run_pipeline(
                 output_path=cleaned_path,
                 cleaning_params=cleaning_params,
                 fps=fps,
+                workers=cleaning_workers,
             )
 
             if num_cleaned == 0:
@@ -131,6 +136,7 @@ def run_pipeline(
                 image_size=image_size,
                 chunk_size=chunk_size,
                 use_last=use_last,
+                workers=conversion_workers,
             )
 
             total_episodes += num_episodes

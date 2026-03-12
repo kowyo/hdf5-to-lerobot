@@ -93,7 +93,11 @@ def _compute_episode_stats(row_data: dict[str, list]) -> dict[str, dict[str, np.
     ep_stats: dict[str, dict[str, np.ndarray]] = {}
 
     for key, values in row_data.items():
-        if key in ["image", "wrist_image", "left_image"]:
+        if key in [
+            "observation.images.image",
+            "observation.images.wrist_image",
+            "observation.images.left_image",
+        ]:
             sampled = [values[i] for i in _sample_indices(len(values))]
             arr = np.stack([np.asarray(img, dtype=np.uint8) for img in sampled], axis=0)
             arr = np.transpose(arr, (0, 3, 1, 2)).astype(np.float32) / 255.0

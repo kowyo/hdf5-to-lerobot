@@ -5,6 +5,8 @@ This module provides functions to clean and filter HDF5 files by detecting
 and removing static segments from robot demonstration data.
 """
 
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import h5py
@@ -157,8 +159,18 @@ def filter_hdf5_file(
         return False, 0, 0
 
 
+def _filter_hdf5_file_task(job: tuple[str, str, dict, float]) -> tuple[bool, int, int]:
+    """Worker entry point for process-based per-file cleaning."""
+    input_path, output_path, cleaning_params, fps = job
+    return filter_hdf5_file(input_path, output_path, cleaning_params, fps)
+
+
 def clean_hdf5_dataset(
-    input_path: str, output_path: str, cleaning_params: dict, fps: float
+    input_path: str,
+    output_path: str,
+    cleaning_params: dict,
+    fps: float,
+    workers: int = 1,
 ) -> tuple[int, int, int]:
     """清洗单个数据集的所有HDF5文件"""
 
@@ -179,6 +191,21 @@ def clean_hdf5_dataset(
     print(f"Output: {output_path}")
     print(f"{'=' * 80}\n")
 
+    if workers <= 0:
+        workers = os.process_cpu_count() or 1
+    workers = min(workers, len(files))
+
+    jobs = []
+    for file_path in files:
+        rel_path = (
+            Path(file_path).relative_to(input_p) if input_p.is_dir() else Path(file_path).name
+        )
+        out_file = Path(output_path) / rel_path
+        jobs.append((str(file_path), str(out_file), cleaning_params, fps))
+
+    print(f"Cleaning workers: {workers}")
+    print(f"{'=' * 80}\n")
+
     stats = {
         "success": 0,
         "skipped": 0,
@@ -187,29 +214,29 @@ def clean_hdf5_dataset(
         "filtered_frames": 0,
     }
 
-    for _i, file_path in enumerate(tqdm(files, desc="Cleaning")):
-        rel_path = (
-            Path(file_path).relative_to(input_p) if input_p.is_dir() else Path(file_path).name
+    if workers == 1:
+        results = (
+            filter_hdf5_file(file_path, out_file, job_cleaning_params, fps=job_fps)
+            for file_path, out_file, job_cleaning_params, job_fps in jobs
         )
-        out_file = Path(output_path) / rel_path
-        out_file.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        executor = ProcessPoolExecutor(max_workers=workers)
+        results = executor.map(_filter_hdf5_file_task, jobs)
 
-        success, orig_len, filt_len = filter_hdf5_file(
-            str(file_path),
-            str(out_file),
-            cleaning_params,
-            fps=fps,
-        )
-
-        if success:
-            if filt_len > 0:
-                stats["success"] += 1
-                stats["original_frames"] += orig_len
-                stats["filtered_frames"] += filt_len
+    try:
+        for success, orig_len, filt_len in tqdm(results, total=len(jobs), desc="Cleaning"):
+            if success:
+                if filt_len > 0:
+                    stats["success"] += 1
+                    stats["original_frames"] += orig_len
+                    stats["filtered_frames"] += filt_len
+                else:
+                    stats["skipped"] += 1
             else:
-                stats["skipped"] += 1
-        else:
-            stats["error"] += 1
+                stats["error"] += 1
+    finally:
+        if workers > 1:
+            executor.shutdown()
 
     print(f"\n{'=' * 80}")
     print("Cleaning Summary")
