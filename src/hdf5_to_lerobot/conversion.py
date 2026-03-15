@@ -285,6 +285,7 @@ def build_episode_data(
     task_index: int = 0,
     use_last: bool = False,
     resize_workers: int = 1,
+    frame_offset: int = 0,
 ) -> dict:
     """Build episode data as dict for HuggingFace datasets in Pi0.5 format."""
 
@@ -354,7 +355,7 @@ def build_episode_data(
         "timestamp": timestamps.tolist(),
         "frame_index": np.arange(num_frames, dtype=np.int64).tolist(),
         "episode_index": np.full(num_frames, episode_index, dtype=np.int64).tolist(),
-        "index": np.arange(num_frames, dtype=np.int64).tolist(),
+        "index": (frame_offset + np.arange(num_frames, dtype=np.int64)).tolist(),
         "task_index": np.full(num_frames, task_index, dtype=np.int64).tolist(),
     }
 
@@ -585,6 +586,31 @@ def convert_cleaned_dataset(
         )
         for local_idx, h5p in enumerate(files)
     ]
+    for local_idx, h5p in enumerate(tqdm(files, desc="Converting")):
+        try:
+            ep_idx = episode_offset + local_idx
+            chunk_id = ep_idx // chunk_size
+            chunk_dir = data_root / f"chunk-{chunk_id:03d}"
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+
+            # Load data
+            ee_pose, front_imgs, wrist_imgs, left_imgs, timestamps = load_hdf5(str(h5p))
+
+            data = build_episode_data(
+                ee_pose=ee_pose,
+                front_imgs=front_imgs,
+                wrist_imgs=wrist_imgs,
+                left_imgs=left_imgs,
+                timestamps=timestamps,
+                episode_index=ep_idx,
+                fps=fps,
+                image_size=image_size,
+                task_index=task_index,
+                use_last=use_last,
+                frame_offset=total_frames,
+            )
+
+            episode_length = len(data["timestamp"])
 
     if workers == 1:
         results = (_convert_episode_task(job) for job in jobs)
