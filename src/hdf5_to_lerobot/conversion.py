@@ -6,8 +6,8 @@ used by Pi0.5 and similar robot learning frameworks.
 """
 
 import json
-import multiprocessing as mp
-from concurrent.futures import ThreadPoolExecutor
+import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +51,11 @@ def compute_episode_stats(data: dict[str, Any]) -> dict[str, dict[str, np.ndarra
     ep_stats: dict[str, dict[str, np.ndarray]] = {}
 
     for key, values in data.items():
-        if key in ["image", "wrist_image", "left_image"]:
+        if key in [
+            "observation.images.image",
+            "observation.images.wrist_image",
+            "observation.images.left_image",
+        ]:
             # Sample image frames and convert to (N, C, H, W) float32 in [0,1].
             sampled = [values[i] for i in _sample_indices(len(values))]
             arr = np.stack([np.asarray(img, dtype=np.uint8) for img in sampled], axis=0)
@@ -85,7 +89,7 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict[str, np.ndarray]]]) -
                     raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
                 if k == "count" and v.shape != (1,):
                     raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
-                if "image" in fkey and k != "count" and v.shape != (3, 1, 1):
+                if "observation.images" in fkey and k != "count" and v.shape != (3, 1, 1):
                     raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
 
 
@@ -254,6 +258,21 @@ def load_hdf5(
     )
 
 
+def _resolve_worker_count(requested_workers: int, total_jobs: int) -> int:
+    if total_jobs <= 0:
+        return 1
+    if requested_workers <= 0:
+        requested_workers = os.process_cpu_count() or 1
+    return max(1, min(requested_workers, total_jobs))
+
+
+def _resolve_resize_workers(episode_workers: int) -> int:
+    total_cpus = os.process_cpu_count() or 1
+    if episode_workers <= 1:
+        return min(8, total_cpus)
+    return max(1, min(8, total_cpus // episode_workers))
+
+
 def build_episode_data(
     ee_pose: np.ndarray,
     front_imgs: np.ndarray,
@@ -265,6 +284,7 @@ def build_episode_data(
     image_size: int,
     task_index: int = 0,
     use_last: bool = False,
+    resize_workers: int = 1,
     frame_offset: int = 0,
 ) -> dict:
     """Build episode data as dict for HuggingFace datasets in Pi0.5 format."""
@@ -277,8 +297,7 @@ def build_episode_data(
     else:
         timestamps = (timestamps - timestamps[0]).astype(np.float32)
 
-    # ========== OPTIMIZED: Parallel batch resize ==========
-    num_workers = min(8, mp.cpu_count())  # 自动适配CPU核心数
+    resize_workers = max(1, resize_workers)
 
     def resize_batch(imgs, size, crop_params=None):
         def resize_single(img):
@@ -290,7 +309,7 @@ def build_episode_data(
             resized = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
             return Image.fromarray(resized)
 
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        with ThreadPoolExecutor(max_workers=resize_workers) as executor:
             return list(executor.map(resize_single, imgs))
 
     # TODO: 不进行剪裁
@@ -328,11 +347,11 @@ def build_episode_data(
         left_resized = [last_pil] * num_frames
 
     data = {
-        "image": front_resized,
-        "wrist_image": wrist_resized,
-        "left_image": left_resized,
-        "state": states.tolist(),
-        "actions": actions.tolist(),
+        "observation.images.image": front_resized,
+        "observation.images.wrist_image": wrist_resized,
+        "observation.images.left_image": left_resized,
+        "observation.state": states.tolist(),
+        "action": actions.tolist(),
         "timestamp": timestamps.tolist(),
         "frame_index": np.arange(num_frames, dtype=np.int64).tolist(),
         "episode_index": np.full(num_frames, episode_index, dtype=np.int64).tolist(),
@@ -343,15 +362,72 @@ def build_episode_data(
     return data
 
 
+def _get_hdf5_frame_count(hdf5_path: str) -> int:
+    """Quickly read the frame count from an HDF5 file without decoding pixels."""
+    with h5py.File(hdf5_path, "r") as f:
+        return len(f["observations"]["ee_pose"])
+
+
+def _convert_episode_task(
+    job: tuple[str, str, int, int, str, float, int, int, int, bool, int, int],
+) -> tuple[int, int, str | None, dict[str, dict[str, np.ndarray]] | None]:
+    (
+        h5p,
+        output_root,
+        episode_offset,
+        local_idx,
+        file_name,
+        fps,
+        image_size,
+        task_index,
+        chunk_size,
+        use_last,
+        resize_workers,
+        frame_offset,
+    ) = job
+
+    ep_idx = episode_offset + local_idx
+
+    try:
+        output_p = Path(output_root)
+        chunk_id = ep_idx // chunk_size
+        chunk_dir = output_p / "data" / f"chunk-{chunk_id:03d}"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        ee_pose, front_imgs, wrist_imgs, left_imgs, timestamps = load_hdf5(h5p)
+        data = build_episode_data(
+            ee_pose=ee_pose,
+            front_imgs=front_imgs,
+            wrist_imgs=wrist_imgs,
+            left_imgs=left_imgs,
+            timestamps=timestamps,
+            episode_index=ep_idx,
+            fps=fps,
+            image_size=image_size,
+            task_index=task_index,
+            use_last=use_last,
+            resize_workers=resize_workers,
+            frame_offset=frame_offset,
+        )
+
+        parquet_path = chunk_dir / f"episode_{ep_idx:06d}.parquet"
+        save_episode_with_datasets(data, str(parquet_path))
+
+        episode_length = len(data["timestamp"])
+        return ep_idx, episode_length, None, compute_episode_stats(data)
+    except Exception as e:
+        return ep_idx, 0, f"Episode {ep_idx} ({file_name}): {str(e)}", None
+
+
 def save_episode_with_datasets(data: dict, out_path: str) -> None:
     """Save episode using HuggingFace datasets library."""
     features = Features(
         {
-            "image": ImageFeature(),
-            "wrist_image": ImageFeature(),
-            "left_image": ImageFeature(),
-            "state": Sequence(Value("float32"), length=8),
-            "actions": Sequence(Value("float32"), length=7),
+            "observation.images.image": ImageFeature(),
+            "observation.images.wrist_image": ImageFeature(),
+            "observation.images.left_image": ImageFeature(),
+            "observation.state": Sequence(Value("float32"), length=8),
+            "action": Sequence(Value("float32"), length=7),
             "timestamp": Value("float32"),
             "frame_index": Value("int64"),
             "episode_index": Value("int64"),
@@ -411,27 +487,27 @@ def write_info_json(
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
         "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
         "features": {
-            "image": {
+            "observation.images.image": {
                 "dtype": "image",
                 "shape": [image_size, image_size, 3],
                 "names": ["height", "width", "channel"],
             },
-            "wrist_image": {
+            "observation.images.wrist_image": {
                 "dtype": "image",
                 "shape": [image_size, image_size, 3],
                 "names": ["height", "width", "channel"],
             },
-            "left_image": {
+            "observation.images.left_image": {
                 "dtype": "image",
                 "shape": [image_size, image_size, 3],
                 "names": ["height", "width", "channel"],
             },
-            "state": {
+            "observation.state": {
                 "dtype": "float32",
                 "shape": [8],
                 "names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper", "gripper"],
             },
-            "actions": {
+            "action": {
                 "dtype": "float32",
                 "shape": [7],
                 "names": [
@@ -468,6 +544,7 @@ def convert_cleaned_dataset(
     image_size: int,
     chunk_size: int,
     use_last: bool,
+    workers: int = 1,
 ) -> tuple[int, int, list[str], list[dict[str, dict[str, np.ndarray]]]]:
     """
     Convert a single cleaned dataset to LeRobot format.
@@ -489,55 +566,65 @@ def convert_cleaned_dataset(
     print(f"{'=' * 80}")
     print(f"Task: {task_text}")
     print(f"Files: {len(files)}")
+    workers = _resolve_worker_count(workers, len(files))
+    resize_workers = _resolve_resize_workers(workers)
+    print(f"Episode workers: {workers}")
+    print(f"Resize workers per episode: {resize_workers}")
     print(f"{'=' * 80}\n")
 
-    output_p = Path(output_root)
-    data_root = output_p / "data"
-    meta_root = output_p / "meta"
+    meta_root = Path(output_root) / "meta"
 
     total_frames = 0
-    errors = []
+    errors: list[str] = []
     episode_stats: list[dict[str, dict[str, np.ndarray]]] = []
 
-    for local_idx, h5p in enumerate(tqdm(files, desc="Converting")):
-        try:
-            ep_idx = episode_offset + local_idx
-            chunk_id = ep_idx // chunk_size
-            chunk_dir = data_root / f"chunk-{chunk_id:03d}"
-            chunk_dir.mkdir(parents=True, exist_ok=True)
+    # Pre-scan HDF5 files to compute cumulative frame offsets for continuous indexing.
+    frame_counts = [_get_hdf5_frame_count(str(h5p)) for h5p in files]
+    cumulative_offsets = []
+    running_total = 0
+    for count in frame_counts:
+        cumulative_offsets.append(running_total)
+        running_total += count
 
-            # Load data
-            ee_pose, front_imgs, wrist_imgs, left_imgs, timestamps = load_hdf5(str(h5p))
+    jobs = [
+        (
+            str(h5p),
+            output_root,
+            episode_offset,
+            local_idx,
+            Path(h5p).name,
+            fps,
+            image_size,
+            task_index,
+            chunk_size,
+            use_last,
+            resize_workers,
+            cumulative_offsets[local_idx],
+        )
+        for local_idx, h5p in enumerate(files)
+    ]
 
-            data = build_episode_data(
-                ee_pose=ee_pose,
-                front_imgs=front_imgs,
-                wrist_imgs=wrist_imgs,
-                left_imgs=left_imgs,
-                timestamps=timestamps,
-                episode_index=ep_idx,
-                fps=fps,
-                image_size=image_size,
-                task_index=task_index,
-                use_last=use_last,
-                frame_offset=total_frames,
-            )
+    if workers == 1:
+        results = (_convert_episode_task(job) for job in jobs)
+    else:
+        executor = ProcessPoolExecutor(max_workers=workers)
+        results = executor.map(_convert_episode_task, jobs)
 
-            episode_length = len(data["timestamp"])
+    try:
+        for ep_idx, episode_length, error_msg, stats in tqdm(
+            results, total=len(jobs), desc="Converting"
+        ):
+            if error_msg is not None:
+                errors.append(error_msg)
+                print(f"\n  [✗] ERROR: {error_msg}")
+                continue
 
-            # Save parquet
-            parquet_path = chunk_dir / f"episode_{ep_idx:06d}.parquet"
-            save_episode_with_datasets(data, str(parquet_path))
-
-            # Append to episodes.jsonl
             append_episode_meta(str(meta_root), ep_idx, length=episode_length, task_text=task_text)
-
             total_frames += episode_length
-            episode_stats.append(compute_episode_stats(data))
-
-        except Exception as e:
-            error_msg = f"Episode {ep_idx} ({Path(h5p).name}): {str(e)}"
-            errors.append(error_msg)
-            print(f"\n  [✗] ERROR: {error_msg}")
+            if stats is not None:
+                episode_stats.append(stats)
+    finally:
+        if workers > 1:
+            executor.shutdown()
 
     return len(files) - len(errors), total_frames, errors, episode_stats

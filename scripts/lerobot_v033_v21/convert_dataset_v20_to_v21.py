@@ -34,6 +34,7 @@ python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 \
 import argparse
 import json
 import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -93,7 +94,11 @@ def _compute_episode_stats(row_data: dict[str, list]) -> dict[str, dict[str, np.
     ep_stats: dict[str, dict[str, np.ndarray]] = {}
 
     for key, values in row_data.items():
-        if key in ["image", "wrist_image", "left_image"]:
+        if key in [
+            "observation.images.image",
+            "observation.images.wrist_image",
+            "observation.images.left_image",
+        ]:
             sampled = [values[i] for i in _sample_indices(len(values))]
             arr = np.stack([np.asarray(img, dtype=np.uint8) for img in sampled], axis=0)
             arr = np.transpose(arr, (0, 3, 1, 2)).astype(np.float32) / 255.0
@@ -109,6 +114,14 @@ def _compute_episode_stats(row_data: dict[str, list]) -> dict[str, dict[str, np.
         ep_stats[key] = _get_feature_stats(arr, axis=0, keepdims=arr.ndim == 1)
 
     return ep_stats
+
+
+def _process_episode(args):
+    ep_idx, parquet_path = args
+    ds = Dataset.from_parquet(str(parquet_path))
+    ep_data = {col: ds[col] for col in ds.column_names}
+    ep_stats = _compute_episode_stats(ep_data)
+    return ep_idx, ep_stats
 
 
 def _aggregate_feature_stats(stats_ft_list: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
@@ -180,13 +193,19 @@ def convert_dataset_local(local_root: str, num_workers: int = 4):
     if not parquet_files:
         raise FileNotFoundError(f"No episode parquet files found under {data_root}")
 
-    all_episode_stats = []
+    results = [None] * len(parquet_files)
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {
+            executor.submit(_process_episode, (ep_idx, path)): ep_idx
+            for ep_idx, path in enumerate(parquet_files)
+        }
+        for future in as_completed(futures):
+            ep_idx, ep_stats = future.result()
+            results[ep_idx] = ep_stats
+
+    all_episode_stats = results
     with episodes_stats_path.open("w", encoding="utf-8") as out_f:
-        for ep_idx, parquet_path in enumerate(parquet_files):
-            ds = Dataset.from_parquet(str(parquet_path))
-            ep_data = {col: ds[col] for col in ds.column_names}
-            ep_stats = _compute_episode_stats(ep_data)
-            all_episode_stats.append(ep_stats)
+        for ep_idx, ep_stats in enumerate(all_episode_stats):
             out_f.write(json.dumps({"episode_index": ep_idx, "stats": _serialize(ep_stats)}) + "\n")
 
     ref_stats = _read_stats(root / STATS_PATH)

@@ -32,6 +32,8 @@ def run_pipeline(
     print("HDF5 to LeRobot Pipeline")
     print("=" * 80)
     print(f"Config: {config_path}")
+    num_workers = int(config.get("num_workers", config.get("cleaning", {}).get("num_workers", 1)))
+    print(f"Workers: {num_workers}")
     print(f"Skip cleaning: {skip_cleaning}")
     print(f"Skip conversion: {skip_conversion}")
     print("=" * 80 + "\n")
@@ -58,6 +60,8 @@ def run_pipeline(
     )
 
     temp_clean_root = config.get("temp_clean_dir", str(Path(output_root) / "_temp_cleaned"))
+    cleaning_workers = num_workers
+    conversion_workers = num_workers
 
     # Collect all unique tasks
     all_tasks: list[str] = []
@@ -110,6 +114,7 @@ def run_pipeline(
                 output_path=cleaned_path,
                 cleaning_params=cleaning_params,
                 fps=fps,
+                workers=cleaning_workers,
             )
 
             if num_cleaned == 0:
@@ -131,6 +136,7 @@ def run_pipeline(
                 image_size=image_size,
                 chunk_size=chunk_size,
                 use_last=use_last,
+                workers=conversion_workers,
             )
 
             total_episodes += num_episodes
