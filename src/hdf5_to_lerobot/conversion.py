@@ -362,8 +362,14 @@ def build_episode_data(
     return data
 
 
+def _get_hdf5_frame_count(hdf5_path: str) -> int:
+    """Quickly read the frame count from an HDF5 file without decoding pixels."""
+    with h5py.File(hdf5_path, "r") as f:
+        return len(f["observations"]["ee_pose"])
+
+
 def _convert_episode_task(
-    job: tuple[str, str, int, int, str, float, int, int, int, bool, int],
+    job: tuple[str, str, int, int, str, float, int, int, int, bool, int, int],
 ) -> tuple[int, int, str | None, dict[str, dict[str, np.ndarray]] | None]:
     (
         h5p,
@@ -377,6 +383,7 @@ def _convert_episode_task(
         chunk_size,
         use_last,
         resize_workers,
+        frame_offset,
     ) = job
 
     ep_idx = episode_offset + local_idx
@@ -400,6 +407,7 @@ def _convert_episode_task(
             task_index=task_index,
             use_last=use_last,
             resize_workers=resize_workers,
+            frame_offset=frame_offset,
         )
 
         parquet_path = chunk_dir / f"episode_{ep_idx:06d}.parquet"
@@ -570,6 +578,14 @@ def convert_cleaned_dataset(
     errors: list[str] = []
     episode_stats: list[dict[str, dict[str, np.ndarray]]] = []
 
+    # Pre-scan HDF5 files to compute cumulative frame offsets for continuous indexing.
+    frame_counts = [_get_hdf5_frame_count(str(h5p)) for h5p in files]
+    cumulative_offsets = []
+    running_total = 0
+    for count in frame_counts:
+        cumulative_offsets.append(running_total)
+        running_total += count
+
     jobs = [
         (
             str(h5p),
@@ -583,34 +599,10 @@ def convert_cleaned_dataset(
             chunk_size,
             use_last,
             resize_workers,
+            cumulative_offsets[local_idx],
         )
         for local_idx, h5p in enumerate(files)
     ]
-    for local_idx, h5p in enumerate(tqdm(files, desc="Converting")):
-        try:
-            ep_idx = episode_offset + local_idx
-            chunk_id = ep_idx // chunk_size
-            chunk_dir = data_root / f"chunk-{chunk_id:03d}"
-            chunk_dir.mkdir(parents=True, exist_ok=True)
-
-            # Load data
-            ee_pose, front_imgs, wrist_imgs, left_imgs, timestamps = load_hdf5(str(h5p))
-
-            data = build_episode_data(
-                ee_pose=ee_pose,
-                front_imgs=front_imgs,
-                wrist_imgs=wrist_imgs,
-                left_imgs=left_imgs,
-                timestamps=timestamps,
-                episode_index=ep_idx,
-                fps=fps,
-                image_size=image_size,
-                task_index=task_index,
-                use_last=use_last,
-                frame_offset=total_frames,
-            )
-
-            episode_length = len(data["timestamp"])
 
     if workers == 1:
         results = (_convert_episode_task(job) for job in jobs)
