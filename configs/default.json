@@ -1,6 +1,6 @@
 {
   "output_root": "data/lerobot_dataset",
-  "num_workers": 60,
+  "num_workers": 96,
   "fps": 15,
   "image_size": 224,
   "chunk_size": 1000,
