@@ -13,5 +13,7 @@ make prepare
 ## Usage
 
 ```bash
+uv tool install hf
+hf auth login
 make convert REPO=<user/dataset-name>
 ```
