@@ -107,8 +107,8 @@ if [[ "$PUSH_TO_HUB" == "true" ]]; then
         --repo-id="$REPO_ID" \
         --root="$OUTPUT_ROOT"
 
-    step "Tagging dataset as v1.0"
-    hf repo tag create "$REPO_ID" v1.0 --repo-type dataset
+    step "Tagging dataset as v3.0"
+    hf repo tag create "$REPO_ID" v3.0 --repo-type dataset
 fi
 
 echo ""
