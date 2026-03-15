@@ -1,4 +1,4 @@
-.PHONY: prepare install-hooks check format test clean
+.PHONY: prepare install-hooks check format test clean convert
 
 # Prepare development environment
 prepare:
@@ -33,6 +33,9 @@ clean:
 run:
 	uv run python -m hdf5_to_lerobot
 
+convert:
+	bash scripts/convert_to_v30.sh --repo-id $(REPO) --config configs/default.json --push-to-hub
+
 download-dataset:
 	uv run python scripts/download_dataset.py $(REPO)
 
@@ -46,5 +49,6 @@ help:
 	@echo "  format       - Run ruff formatter"
 	@echo "  clean        - Clean build artifacts and cache files"
 	@echo "  run          - Run the hdf5_to_lerobot pipeline"
+	@echo "  convert REPO=<repo_id> - Convert HDF5 to LeRobot v3.0 and push to hub"
 	@echo "  download-dataset REPO=<repo_id> - Download dataset from Hugging Face"
 	@echo "  help         - Show this help message"
