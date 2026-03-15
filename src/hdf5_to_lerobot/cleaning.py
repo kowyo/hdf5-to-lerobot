@@ -102,8 +102,12 @@ def filter_hdf5_file(
     output_path: str,
     cleaning_params: dict,
     fps: float = 10.0,
-) -> tuple[bool, int, int]:
-    """过滤单个HDF5文件"""
+) -> tuple[str, int, int, str]:
+    """过滤单个HDF5文件
+
+    Returns: (status, original_length, filtered_length, error_msg)
+      status: "success" | "skipped" | "error"
+    """
     try:
         with h5py.File(input_path, "r") as f_in:
             ee_pose = f_in["observations"]["ee_pose"][:]
@@ -121,7 +125,7 @@ def filter_hdf5_file(
             filtered_length = np.sum(mask)
 
             if filtered_length < cleaning_params["min_episode_length"]:
-                return False, original_length, 0
+                return "skipped", original_length, 0, ""
 
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             with h5py.File(output_path, "w") as f_out:
@@ -152,14 +156,13 @@ def filter_hdf5_file(
                         data = f_in_obs[key][:]
                         obs_group.create_dataset(key, data=data[mask])
 
-            return True, original_length, filtered_length
+            return "success", original_length, filtered_length, ""
 
     except Exception as e:
-        print(f"    [ERROR] {str(e)}")
-        return False, 0, 0
+        return "error", 0, 0, str(e)
 
 
-def _filter_hdf5_file_task(job: tuple[str, str, dict, float]) -> tuple[bool, int, int]:
+def _filter_hdf5_file_task(job: tuple[str, str, dict, float]) -> tuple[str, int, int, str]:
     """Worker entry point for process-based per-file cleaning."""
     input_path, output_path, cleaning_params, fps = job
     return filter_hdf5_file(input_path, output_path, cleaning_params, fps)
@@ -223,17 +226,22 @@ def clean_hdf5_dataset(
         executor = ProcessPoolExecutor(max_workers=workers)
         results = executor.map(_filter_hdf5_file_task, jobs)
 
+    error_files: list[tuple[str, str]] = []
+    skipped_files: list[tuple[str, int]] = []
     try:
-        for success, orig_len, filt_len in tqdm(results, total=len(jobs), desc="Cleaning"):
-            if success:
-                if filt_len > 0:
-                    stats["success"] += 1
-                    stats["original_frames"] += orig_len
-                    stats["filtered_frames"] += filt_len
-                else:
-                    stats["skipped"] += 1
+        for (file_path, _, _, _), (status, orig_len, filt_len, err_msg) in tqdm(
+            zip(jobs, results, strict=False), total=len(jobs), desc="Cleaning"
+        ):
+            if status == "success":
+                stats["success"] += 1
+                stats["original_frames"] += orig_len
+                stats["filtered_frames"] += filt_len
+            elif status == "skipped":
+                stats["skipped"] += 1
+                skipped_files.append((file_path, orig_len))
             else:
                 stats["error"] += 1
+                error_files.append((file_path, err_msg))
     finally:
         if workers > 1:
             executor.shutdown()
@@ -249,6 +257,14 @@ def clean_hdf5_dataset(
     if stats["original_frames"] > 0:
         kept_ratio = stats["filtered_frames"] / stats["original_frames"] * 100
         print(f"Kept ratio:           {kept_ratio:.1f}%")
+    if skipped_files:
+        print("\nSkipped files (too short):")
+        for path, orig_len in skipped_files:
+            print(f"  {path}  ({orig_len} frames)")
+    if error_files:
+        print("\nFailed files:")
+        for path, msg in error_files:
+            print(f"  {path}: {msg}")
     print(f"{'=' * 80}\n")
 
     return stats["success"], stats["filtered_frames"], stats["error"]

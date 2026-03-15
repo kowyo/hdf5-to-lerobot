@@ -100,10 +100,15 @@ rm -rf "$TMP_ROOT"; TMP_ROOT=""  # cleared so cleanup trap is a no-op
 # ── Push & tag ─────────────────────────────────────────────────────────────────
 if [[ "$PUSH_TO_HUB" == "true" ]]; then
     step "Pushing v3.0 dataset to hub"
-    uv run python -c "
-from huggingface_hub import HfApi
-HfApi().upload_folder(folder_path='$OUTPUT_ROOT', repo_id='$REPO_ID', repo_type='dataset')
-"
+    hf upload-large-folder "$REPO_ID" "$OUTPUT_ROOT" --repo-type dataset
+
+    step "Augmenting dataset with quantile stats"
+    uv run python -m lerobot.datasets.v30.augment_dataset_quantile_stats \
+        --repo-id="$REPO_ID" \
+        --root="$OUTPUT_ROOT"
+
+    step "Tagging dataset as v1.0"
+    hf repo tag create "$REPO_ID" v1.0 --repo-type dataset
 fi
 
 echo ""
