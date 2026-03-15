@@ -12,6 +12,8 @@ make prepare
 
 ## Usage
 
+Converts HDF5 robot data to LeRobot v3.0 format and publishes it to the Hugging Face Hub.
+
 ```bash
 uv tool install hf
 hf auth login
