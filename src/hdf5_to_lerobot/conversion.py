@@ -347,9 +347,9 @@ def build_episode_data(
         left_resized = [last_pil] * num_frames
 
     data = {
-        "observation.images.image": front_resized,
+        "observation.images.image": left_resized,
         "observation.images.wrist_image": wrist_resized,
-        "observation.images.left_image": left_resized,
+        "observation.images.left_image": front_resized,
         "observation.state": states.tolist(),
         "action": actions.tolist(),
         "timestamp": timestamps.tolist(),
