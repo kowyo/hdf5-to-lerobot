@@ -60,6 +60,12 @@ echo "  Push to hub: $PUSH_TO_HUB"
 echo "  Skip clean:  $SKIP_CLEANING"
 echo "════════════════════════════════════════════════════════════════════════════════"
 
+# ── Clean output directory ─────────────────────────────────────────────────────
+if [[ -d "$OUTPUT_ROOT" ]]; then
+    step "Cleaning output directory: $OUTPUT_ROOT"
+    rm -rf "$OUTPUT_ROOT"
+fi
+
 # ── Step 1: HDF5 → v2.0 ───────────────────────────────────────────────────────
 step "Step 1/3 — HDF5 → v2.0"
 if [[ "$SKIP_CLEANING" == "true" ]]; then
