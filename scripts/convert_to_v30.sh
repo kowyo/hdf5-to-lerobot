@@ -117,9 +117,6 @@ if [[ "$PUSH_TO_HUB" == "true" ]]; then
     uv run python -m lerobot.datasets.v30.augment_dataset_quantile_stats \
         --repo-id="$REPO_ID" \
         --root="$OUTPUT_ROOT"
-
-    step "Tagging dataset as v3.0"
-    hf repo tag create "$REPO_ID" v3.0 --repo-type dataset
 fi
 
 echo ""
