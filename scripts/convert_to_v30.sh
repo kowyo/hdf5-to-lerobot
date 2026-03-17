@@ -49,6 +49,7 @@ done
 # ── Read output_root from config ───────────────────────────────────────────────
 OUTPUT_ROOT=$(python3 -c "import json; print(json.load(open('$CONFIG'))['output_root'])")
 NUM_WORKERS=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('num_workers', 1))")
+TEMP_CLEAN_DIR=$(python3 -c "import json; c=json.load(open('$CONFIG')); print(c.get('temp_clean_dir', c['output_root'] + '/_temp_cleaned'))")
 [[ -n "$OUTPUT_ROOT" ]] || { echo "[ERROR] Could not read output_root from $CONFIG"; exit 1; }
 
 echo "════════════════════════════════════════════════════════════════════════════════"
@@ -60,10 +61,14 @@ echo "  Push to hub: $PUSH_TO_HUB"
 echo "  Skip clean:  $SKIP_CLEANING"
 echo "════════════════════════════════════════════════════════════════════════════════"
 
-# ── Clean output directory ─────────────────────────────────────────────────────
+# ── Clean output and temp directories ─────────────────────────────────────────
 if [[ -d "$OUTPUT_ROOT" ]]; then
     step "Cleaning output directory: $OUTPUT_ROOT"
     rm -rf "$OUTPUT_ROOT"
+fi
+if [[ -d "$TEMP_CLEAN_DIR" ]]; then
+    step "Cleaning temp directory: $TEMP_CLEAN_DIR"
+    rm -rf "$TEMP_CLEAN_DIR"
 fi
 
 # ── Step 1: HDF5 → v2.0 ───────────────────────────────────────────────────────
