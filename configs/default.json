@@ -18,7 +18,7 @@
   "datasets": [
     {
       "path": "/workspace/zifeng/hdf5-to-lerobot/data/push-cube-raw",
-      "task": "Pick up the orange block and insert it into the white slot."
+      "task": "push the cube in the corner to the center"
     }
   ]
 }
