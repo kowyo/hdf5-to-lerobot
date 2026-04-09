@@ -71,6 +71,26 @@ if [[ -d "$TEMP_CLEAN_DIR" ]]; then
     rm -rf "$TEMP_CLEAN_DIR"
 fi
 
+# ── Remove failed folders from input datasets ─────────────────────────────────
+step "Removing failed folders from input datasets"
+uv run python3 << 'EOF'
+import json
+import shutil
+from pathlib import Path
+
+with open('$CONFIG') as f:
+    config = json.load(f)
+
+for ds in config.get('datasets', []):
+    input_path = Path(ds['path'])
+    failed_dir = input_path / 'failed'
+    if failed_dir.exists():
+        print(f"  Removing: {failed_dir}")
+        shutil.rmtree(failed_dir)
+    else:
+        print(f"  No failed folder found in: {input_path}")
+EOF
+
 # ── Step 1: HDF5 → v2.0 ───────────────────────────────────────────────────────
 step "Step 1/3 — HDF5 → v2.0"
 if [[ "$SKIP_CLEANING" == "true" ]]; then

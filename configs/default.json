@@ -1,5 +1,5 @@
 {
-  "output_root": "data/pick-and-place",
+  "output_root": "data/push-cube",
   "num_workers": 8,
   "fps": 15,
   "image_size": 224,
@@ -7,7 +7,7 @@
   "use_last": false,
   "write_stats": true,
   "keep_temp_cleaned": false,
-  "temp_clean_dir": "data/pick-and-place_v20/_temp_cleaned",
+  "temp_clean_dir": "data/push-cube_v20/_temp_cleaned",
   "cleaning": {
     "gripper_threshold": 0.0005,
     "pos_threshold": 0.0005,
@@ -17,7 +17,7 @@
   },
   "datasets": [
     {
-      "path": "/workspace/zifeng/hdf5-to-lerobot/data/pick-and-place-raw",
+      "path": "/workspace/zifeng/hdf5-to-lerobot/data/push-cube-raw",
       "task": "stack the gray cube on the white cube"
     }
   ]
